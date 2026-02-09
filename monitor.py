@@ -77,5 +77,7 @@ for name, url in CATEGORIES.items():
 
 if message:
     send_telegram(message)
+    
+send_telegram("✅ Test monitor attivo e funzionante")
 
 save_current(current)
