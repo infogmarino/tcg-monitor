@@ -81,10 +81,15 @@ for name, url in CATEGORIES.items():
     try:
         if "winleoo" in url:
             products = get_products_winleoo(url)
+            print(name, "PRODOTTI TROVATI:", len(products))
+
         elif "dnacards" in url:
             products = get_products_dnacards(url)
+            print(name, "PRODOTTI TROVATI:", len(products))
+
         else:
             products = get_products_shopify(url)
+            print(name, "PRODOTTI TROVATI:", len(products))
 
         current[name] = products
         old_products = old.get(name, {})
