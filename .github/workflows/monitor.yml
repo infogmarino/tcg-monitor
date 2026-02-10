@@ -2,7 +2,7 @@ name: TCG Monitor
 
 on:
   schedule:
-    - cron: '0 * * * *'   # ogni ora
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 
 jobs:
