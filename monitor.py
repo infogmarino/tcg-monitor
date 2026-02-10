@@ -71,6 +71,8 @@ def save_current(data):
         json.dump(data, f)
 
 old = load_old()
+print("OLD DATA:", old)
+
 current = {}
 message = ""
 
