@@ -20,21 +20,16 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Download previous state
-        uses: actions/download-artifact@v4
-        with:
-          name: products-state
-        continue-on-error: true
-
       - name: Run monitor
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python monitor.py
 
-      - name: Upload state file
-        uses: actions/upload-artifact@v4
-        with:
-          name: products-state
-          path: products.json
-          if-no-files-found: ignore
+      - name: Commit state file
+        run: |
+          git config --global user.name "tcg-monitor"
+          git config --global user.email "actions@github.com"
+          git add products.json
+          git commit -m "Update products state" || echo "No changes"
+          git push
