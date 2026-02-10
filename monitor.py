@@ -75,11 +75,7 @@ for name, url in CATEGORIES.items():
     except Exception as e:
         print(f"Errore su {name}: {e}")
 
-message += "🧪 PRODOTTO TEST SIMULATO\nhttps://test-link.com\n\n"
-
-print("MESSAGGIO FINALE:")
-print(message)
-
-send_telegram("TEST FORZATO")
+if message:
+    send_telegram(message)
 
 save_current(current)
