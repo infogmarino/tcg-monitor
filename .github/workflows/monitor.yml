@@ -2,7 +2,7 @@ name: TCG Monitor
 
 on:
   schedule:
-    - cron: "*/20 * * * *"
+    - cron: '0 * * * *'   # ogni ora
   workflow_dispatch:
 
 jobs:
@@ -11,17 +11,30 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-      
+
       - name: Install dependencies
         run: pip install -r requirements.txt
-      
+
+      - name: Download previous state
+        uses: actions/download-artifact@v4
+        with:
+          name: products-state
+        continue-on-error: true
+
       - name: Run monitor
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: python monitor.py
+
+      - name: Upload state file
+        uses: actions/upload-artifact@v4
+        with:
+          name: products-state
+          path: products.json
+          if-no-files-found: ignore
