@@ -37,10 +37,34 @@ def send_telegram(text):
     )
 
 def get_products_winleoo(url):
-    r = requests.get(url, headers=headers, timeout=15)
-    soup = BeautifulSoup(r.text, "html.parser")
-    items = soup.select("ul.products li a.woocommerce-LoopProduct-link")
-    return {i["href"]: i.text.strip() for i in items}
+    products = {}
+    page = 1
+
+    while True:
+        if page == 1:
+            page_url = url
+        else:
+            page_url = url.rstrip("/") + f"/page/{page}/"
+
+        r = requests.get(page_url, headers=headers, timeout=15)
+
+        if r.status_code != 200:
+            break
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        items = soup.select("ul.products li a.woocommerce-LoopProduct-link")
+
+        if not items:
+            break  # nessun prodotto = fine pagine
+
+        for i in items:
+            link = i["href"]
+            title = i.text.strip()
+            products[link] = title
+
+        page += 1
+
+    return products
 
 def get_products_shopify(url):
     base = url.split("/collections")[0]
