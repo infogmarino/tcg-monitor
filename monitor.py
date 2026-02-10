@@ -43,15 +43,22 @@ def get_products_winleoo(url):
     return {i["href"]: i.text.strip() for i in items}
 
 def get_products_shopify(url):
-    r = requests.get(url + ".json", headers=headers, timeout=15)
-    data = r.json()
+    r = requests.get(url, headers=headers, timeout=15)
+    soup = BeautifulSoup(r.text, "html.parser")
+
     products = {}
 
-    base = url.split("/collections")[0]
+    items = soup.select("a.full-unstyled-link")
 
-    for product in data.get("products", []):
-        link = f"{base}/products/{product['handle']}"
-        products[link] = product["title"]
+    for item in items:
+        link = item.get("href")
+        title = item.text.strip()
+
+        if link and title:
+            if link.startswith("/"):
+                base = url.split("/collections")[0]
+                link = base + link
+            products[link] = title
 
     return products
 
