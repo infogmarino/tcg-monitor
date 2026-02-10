@@ -36,7 +36,7 @@ def send_telegram(text):
         timeout=10
     )
 
-def get_products_winleoo(url):
+def get_products_winleoo(url): 
     products = {}
     page = 1
 
