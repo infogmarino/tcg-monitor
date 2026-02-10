@@ -77,7 +77,9 @@ for name, url in CATEGORIES.items():
 
 message += "🧪 PRODOTTO TEST SIMULATO\nhttps://test-link.com\n\n"
 
-if message:
-    send_telegram(message)
-    
+print("MESSAGGIO FINALE:")
+print(message)
+
+send_telegram("TEST FORZATO")
+
 save_current(current)
