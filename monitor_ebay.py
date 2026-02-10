@@ -35,6 +35,10 @@ def extract_item_id(link):
 
 def get_recent_sold():
     r = requests.get(EBAY_URL, headers=headers)
+
+print("Status:", r.status_code)
+print(r.text[:500])
+
     soup = BeautifulSoup(r.text, "html.parser")
     items = soup.select(".s-item")
 
