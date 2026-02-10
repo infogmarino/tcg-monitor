@@ -13,6 +13,11 @@ CATEGORIES = {
     "Ludosfera - One Piece": "https://www.ludosfera.it/collections/one-piece-card-game",
     "Ludosfera - Dragon Ball Fusion": "https://www.ludosfera.it/collections/dragon-ball-fusion-card-game",
     "Ludosfera - Pokemon": "https://www.ludosfera.it/collections/pokemon"
+
+        # DNA CARDS
+    "DNA - Dragon Ball": "https://dnacards.it/categoria/prevendita/?show=in_stock&orderby=&filter_category=70&brand=18",
+    "DNA - One Piece": "https://dnacards.it/categoria/prevendita/?show=in_stock&orderby=&filter_category=70&brand=48",
+
 }
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -59,9 +64,12 @@ message = ""
 for name, url in CATEGORIES.items():
     try:
         if "winleoo" in url:
-            products = get_products_winleoo(url)
-        else:
-            products = get_products_shopify(url)
+    products = get_products_winleoo(url)
+elif "dnacards" in url:
+    products = get_products_winleoo(url)
+else:
+    products = get_products_shopify(url)
+)
 
         current[name] = products
         old_products = old.get(name, {})
