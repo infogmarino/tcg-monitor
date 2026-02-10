@@ -12,12 +12,11 @@ CATEGORIES = {
     # LUDOSFERA
     "Ludosfera - One Piece": "https://www.ludosfera.it/collections/one-piece-card-game",
     "Ludosfera - Dragon Ball Fusion": "https://www.ludosfera.it/collections/dragon-ball-fusion-card-game",
-    "Ludosfera - Pokemon": "https://www.ludosfera.it/collections/pokemon"
+    "Ludosfera - Pokemon": "https://www.ludosfera.it/collections/pokemon",
 
-        # DNA CARDS
+    # DNA CARDS
     "DNA - Dragon Ball": "https://dnacards.it/categoria/prevendita/?show=in_stock&orderby=&filter_category=70&brand=18",
     "DNA - One Piece": "https://dnacards.it/categoria/prevendita/?show=in_stock&orderby=&filter_category=70&brand=48",
-
 }
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -27,25 +26,39 @@ DATA_FILE = "products.json"
 headers = {"User-Agent": "Mozilla/5.0"}
 
 def send_telegram(text):
+    if not BOT_TOKEN or not CHAT_ID:
+        print("BOT_TOKEN o CHAT_ID mancanti")
+        return
+
     requests.get(
         f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
-        params={"chat_id": CHAT_ID, "text": text}
+        params={"chat_id": CHAT_ID, "text": text},
+        timeout=10
     )
 
 def get_products_winleoo(url):
-    r = requests.get(url, headers=headers)
+    r = requests.get(url, headers=headers, timeout=15)
     soup = BeautifulSoup(r.text, "html.parser")
     items = soup.select("ul.products li a.woocommerce-LoopProduct-link")
     return {i["href"]: i.text.strip() for i in items}
 
 def get_products_shopify(url):
-    r = requests.get(url + ".json", headers=headers)
+    r = requests.get(url + ".json", headers=headers, timeout=15)
+    if r.status_code != 200:
+        return {}
+
     data = r.json()
     products = {}
     for product in data.get("products", []):
         link = f"{url.replace('/collections', '/products')}/{product['handle']}"
         products[link] = product["title"]
     return products
+
+def get_products_dnacards(url):
+    r = requests.get(url, headers=headers, timeout=15)
+    soup = BeautifulSoup(r.text, "html.parser")
+    items = soup.select("ul.products li a.woocommerce-LoopProduct-link")
+    return {i["href"]: i.text.strip() for i in items}
 
 def load_old():
     if os.path.exists(DATA_FILE):
@@ -64,12 +77,11 @@ message = ""
 for name, url in CATEGORIES.items():
     try:
         if "winleoo" in url:
-    products = get_products_winleoo(url)
-elif "dnacards" in url:
-    products = get_products_winleoo(url)
-else:
-    products = get_products_shopify(url)
-)
+            products = get_products_winleoo(url)
+        elif "dnacards" in url:
+            products = get_products_dnacards(url)
+        else:
+            products = get_products_shopify(url)
 
         current[name] = products
         old_products = old.get(name, {})
