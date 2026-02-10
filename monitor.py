@@ -44,14 +44,15 @@ def get_products_winleoo(url):
 
 def get_products_shopify(url):
     r = requests.get(url + ".json", headers=headers, timeout=15)
-    if r.status_code != 200:
-        return {}
-
     data = r.json()
     products = {}
+
+    base = url.split("/collections")[0]
+
     for product in data.get("products", []):
-        link = f"{url.replace('/collections', '/products')}/{product['handle']}"
+        link = f"{base}/products/{product['handle']}"
         products[link] = product["title"]
+
     return products
 
 def get_products_dnacards(url):
