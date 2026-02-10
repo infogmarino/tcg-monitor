@@ -133,8 +133,6 @@ for name, url in CATEGORIES.items():
 
 if message:
     send_telegram(message)
-else:
-    send_telegram("Test: nessun nuovo prodotto trovato")
 
 
 save_current(current)
