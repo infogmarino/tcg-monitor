@@ -35,7 +35,6 @@ def extract_item_id(link):
 
 def get_recent_sold():
     r = requests.get(EBAY_URL, headers=headers)
-
 print("Status:", r.status_code)
 print(r.text[:500])
 
