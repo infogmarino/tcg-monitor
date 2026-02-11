@@ -9,6 +9,8 @@ from datetime import datetime
 
 CLIENT_ID = os.environ.get("EBAY_APP_ID")
 CLIENT_SECRET = os.environ.get("EBAY_CERT_ID")
+print("CLIENT_ID:", CLIENT_ID)
+print("CLIENT_SECRET:", "OK" if CLIENT_SECRET else None)
 
 SEARCH_TERMS = [
     "Charizard PSA 10",
