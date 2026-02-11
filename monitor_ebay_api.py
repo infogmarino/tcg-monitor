@@ -35,7 +35,9 @@ def get_access_token():
         },
         auth=(EBAY_CLIENT_ID, EBAY_CLIENT_SECRET)
     )
-    return response.json()["access_token"]
+    print(response.text)
+return response.json().get("access_token")
+
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
