@@ -116,6 +116,7 @@ def check_ebay():
 
     for term in SEARCH_TERMS:
         results = search_ebay(term, token)
+        print ("RISULTATI RAW:", results)
 
         if "itemSummaries" in results:
             for item in results["itemSummaries"]:
