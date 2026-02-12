@@ -94,32 +94,54 @@ def get_recent_sold(term):
 # MAIN
 # ==============================
 
+import json
+
 def check_ebay():
     print("Controllo venduti:", datetime.now())
 
-    old_ids = load_old_ids()
+    token = get_access_token()
+    if not token:
+        print("Token non ottenuto.")
+        return
+
+    # Carica ID già notificati
+    try:
+        with open("products.json", "r") as f:
+            old_ids = set(json.load(f))
+    except:
+        old_ids = set()
+
     new_ids = set()
     message = ""
 
     for term in SEARCH_TERMS:
-        items = get_recent_sold(term)
+        results = search_ebay(term, token)
 
-        for item in items:
-            if item["id"] not in old_ids:
-                message += (
-                    f"🔥 NUOVO VENDUTO\n"
-                    f"{item['title']}\n"
-                    f"💰 {item['price']}\n"
-                    f"{item['link']}\n\n"
-                )
-                new_ids.add(item["id"])
+        if "itemSummaries" in results:
+            for item in results["itemSummaries"]:
+                item_id = item.get("itemId")
 
+                if item_id not in old_ids:
+                    title = item.get("title")
+                    price = item.get("price", {}).get("value")
+                    link = item.get("itemWebUrl")
+
+                    message += (
+                        f"🔥 NUOVO VENDUTO\n"
+                        f"{title}\n"
+                        f"💰 €{price}\n"
+                        f"{link}\n\n"
+                    )
+
+                new_ids.add(item_id)
+
+    # Se ci sono nuovi venduti → manda Telegram
     if message:
         send_telegram(message)
+        print("Notifica inviata!")
 
+    # Salva tutti gli ID aggiornati
     all_ids = old_ids.union(new_ids)
-    save_ids(all_ids)
 
-
-if __name__ == "__main__":
-    check_ebay()
+    with open("products.json", "w") as f:
+        json.dump(list(all_ids), f)
