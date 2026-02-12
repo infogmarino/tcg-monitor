@@ -136,7 +136,10 @@ def check_ebay():
                 new_ids.add(item_id)
 
     # Se ci sono nuovi venduti → manda Telegram
-    if True:
+    print("CONTENUTO MESSAGE:")
+print(message)
+
+    if message:
         send_telegram(message)
         print("Notifica inviata!")
 
