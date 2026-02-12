@@ -134,7 +134,7 @@ def check_ebay():
 
     # Invia solo se ci sono nuovi venduti
     if message:
-        send_telegram(message)
+        send_telegram("Test eBay forzato")
         print("Notifica inviata!")
     else:
         print("Nessun nuovo venduto.")
