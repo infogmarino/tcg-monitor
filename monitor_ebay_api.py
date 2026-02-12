@@ -137,7 +137,7 @@ def check_ebay():
 
     # Se ci sono nuovi venduti → manda Telegram
     print("CONTENUTO MESSAGE:")
-print(message)
+    print(message)
 
     if message:
         send_telegram(message)
