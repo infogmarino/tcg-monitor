@@ -67,7 +67,7 @@ def get_access_token():
 # EBAY SEARCH
 # ==============================
 
-def search_ebay(term, token):
+def search_ebay(query, token):
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
     headers = {
@@ -76,15 +76,19 @@ def search_ebay(term, token):
     }
 
     params = {
-        "q": term,
-        "filter": "soldItemsOnly:true",
-        "limit": 10
+        "q": query,
+        "filter": "soldItems",
+        "limit": "20"
     }
 
     response = requests.get(url, headers=headers, params=params)
 
-    if response.status_code == 200:
-        return response.json()
+    if response.status_code != 200:
+        print("Errore eBay:", response.status_code, response.text)
+        return {}
+
+    return response.json()
+
     else:
         print("Errore ricerca:", response.text)
         return {}
