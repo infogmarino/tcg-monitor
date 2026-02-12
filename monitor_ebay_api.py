@@ -1,108 +1,125 @@
-import os
 import requests
-import base64
+from bs4 import BeautifulSoup
+import json
+import os
+import re
 from datetime import datetime
 
-# =========================
+# ==============================
 # CONFIG
-# =========================
-
-CLIENT_ID = os.environ.get("EBAY_APP_ID")
-CLIENT_SECRET = os.environ.get("EBAY_CERT_ID")
-print("CLIENT_ID:", CLIENT_ID)
-print("CLIENT_SECRET:", "OK" if CLIENT_SECRET else None)
+# ==============================
 
 SEARCH_TERMS = [
-    "Charizard PSA 10",
-    "Magikarp PSA 10",
-    "Eevee PSA 10",
-    "Mew PSA 10",
-    "Umbreon PSA 10",
-    "Chinese PSA 10",
-    "Pokemon JP PSA 10",
-    "Snorlax PSA 10",
-    "Pikachu PSA 10"
+    "charizard psa 10",
+    "magikarp psa 10",
+    "eevee psa 10",
+    "mew psa 10",
+    "umbreon psa 10",
+    "snorlax psa 10",
+    "pikachu psa 10"
 ]
 
-# =========================
-# TOKEN
-# =========================
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+DATA_FILE = "ebay_sold.json"
 
-def get_access_token():
-    url = "https://api.ebay.com/identity/v1/oauth2/token"
+headers = {
+    "User-Agent": "Mozilla/5.0"
+}
 
-    credentials = f"{CLIENT_ID}:{CLIENT_SECRET}"
-    encoded_credentials = base64.b64encode(credentials.encode()).decode()
+# ==============================
+# TELEGRAM
+# ==============================
 
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Authorization": f"Basic {encoded_credentials}"
-    }
+def send_telegram(text):
+    requests.get(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage",
+        params={"chat_id": CHAT_ID, "text": text}
+    )
 
-    data = {
-        "grant_type": "client_credentials",
-        "scope": "https://api.ebay.com/oauth/api_scope"
-    }
+# ==============================
+# STORAGE
+# ==============================
 
-    response = requests.post(url, headers=headers, data=data)
-    response_json = response.json()
+def load_old_ids():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE) as f:
+            return set(json.load(f))
+    return set()
 
-    if "access_token" not in response_json:
-        print("ERRORE TOKEN:")
-        print(response_json)
-        return None
+def save_ids(ids):
+    with open(DATA_FILE, "w") as f:
+        json.dump(list(ids), f)
 
-    return response_json["access_token"]
+# ==============================
+# EBAY
+# ==============================
 
-# =========================
-# EBAY SEARCH
-# =========================
+def extract_item_id(link):
+    match = re.search(r"/itm/(\d+)", link)
+    return match.group(1) if match else None
 
-def search_ebay(term, token):
-    url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+def get_recent_sold(term):
+    url = f"https://www.ebay.it/sch/i.html?_nkw={term.replace(' ', '+')}&LH_Sold=1&LH_Complete=1&rt=nc"
+    r = requests.get(url, headers=headers)
+    soup = BeautifulSoup(r.text, "html.parser")
+    items = soup.select(".s-item")
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    results = []
 
-    params = {
-        "q": term,
-        "filter": "soldItemsOnly:true",
-        "limit": 10,
-        "sort": "newlyListed"
-    }
+    for item in items[:5]:
+        title_tag = item.select_one(".s-item__title")
+        price_tag = item.select_one(".s-item__price")
+        link_tag = item.select_one("a.s-item__link")
 
-    response = requests.get(url, headers=headers, params=params)
-    return response.json()
+        if not title_tag or not price_tag or not link_tag:
+            continue
 
-# =========================
+        link = link_tag["href"]
+        item_id = extract_item_id(link)
+
+        if not item_id:
+            continue
+
+        results.append({
+            "id": item_id,
+            "title": title_tag.text.strip(),
+            "price": price_tag.text.strip(),
+            "link": link
+        })
+
+    return results
+
+# ==============================
 # MAIN
-# =========================
+# ==============================
 
 def check_ebay():
-    print("Monitor eBay avviato...")
-    token = get_access_token()
+    print("Controllo venduti:", datetime.now())
 
-    if not token:
-        print("Token non ottenuto. Stop.")
-        return
+    old_ids = load_old_ids()
+    new_ids = set()
+    message = ""
 
     for term in SEARCH_TERMS:
-        print(f"\n🔎 Controllo: {term}")
-        results = search_ebay(term, token)
+        items = get_recent_sold(term)
 
-        if "itemSummaries" in results:
-            for item in results["itemSummaries"]:
-                title = item.get("title")
-                price = item.get("price", {}).get("value")
-                print(f"- {title} | €{price}")
-        else:
-            print("Nessun risultato.")
+        for item in items:
+            if item["id"] not in old_ids:
+                message += (
+                    f"🔥 NUOVO VENDUTO\n"
+                    f"{item['title']}\n"
+                    f"💰 {item['price']}\n"
+                    f"{item['link']}\n\n"
+                )
+                new_ids.add(item["id"])
 
-    print("\nControllo completato:", datetime.now())
+    if message:
+        send_telegram(message)
 
-# =========================
+    all_ids = old_ids.union(new_ids)
+    save_ids(all_ids)
+
 
 if __name__ == "__main__":
     check_ebay()
