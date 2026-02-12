@@ -150,5 +150,5 @@ def check_ebay():
     with open("products.json", "w") as f:
         json.dump(list(all_ids), f)
         
-     if __name__== "__main__":
-       check_ebay()
+    if __name__== "__main__":
+        check_ebay()
