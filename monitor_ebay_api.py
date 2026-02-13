@@ -1,62 +1,70 @@
-import requests
 import os
+import requests
 import json
 from datetime import datetime
 
-# ===============================
+# ==========================
 # CONFIG
-# ===============================
-
-SEARCH_TERMS = [
-    "Charizard psa 10",
-    "Pikachu psa 10",
-    "Chinese psa 10",
-    "Pokemon Jp psa 10",
-    "Umbreon psa 10",
-    "Gengar psa 10",
-    "Celebrations psa 10",
-    "Eevee psa 10",
-    "Snorlax psa 10"
-]
-
-MAX_RESULTS = 20
-PRODUCTS_FILE = "products.json"
+# ==========================
 
 EBAY_TOKEN = os.getenv("EBAY_TOKEN")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+SEARCH_TERMS = [
+    "Charizard PSA 10",
+    "Pikachu PSA 10",
+    "Umbreon PSA 10",
+    "Gengar PSA 10",
+    "Eevee PSA 10",
+    "Snorlax PSA 10",
+    "Celebrations PSA 10",
+    "Pokemon JP PSA 10",
+    "Chinese Pokemon PSA 10"
+]
 
-# ===============================
-# TELEGRAM
-# ===============================
+MAX_INIT_ITEMS = 30
+PRODUCTS_FILE = "products.json"
 
-def send_telegram(message):
-    if not BOT_TOKEN or not CHAT_ID:
-        print("Telegram non configurato.")
-        return
+# ==========================
+# UTILS
+# ==========================
 
+def load_saved_ids():
+    if not os.path.exists(PRODUCTS_FILE):
+        return set()
+    with open(PRODUCTS_FILE, "r") as f:
+        try:
+            data = json.load(f)
+            return set(data)
+        except:
+            return set()
+
+def save_ids(ids):
+    with open(PRODUCTS_FILE, "w") as f:
+        json.dump(list(ids), f)
+
+def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
 
-    # Telegram max 4096 caratteri
-    if len(message) > 4000:
-        chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
-    else:
-        chunks = [message]
+    # Telegram limite 4096 caratteri → spezzettiamo a 4000
+    chunk_size = 4000
+    for i in range(0, len(text), chunk_size):
+        chunk = text[i:i+chunk_size]
 
-    for chunk in chunks:
-        response = requests.post(url, data={
+        payload = {
             "chat_id": CHAT_ID,
             "text": chunk
-        })
-        print("Risposta Telegram:", response.text)
+        }
 
+        response = requests.post(url, data=payload)
+        print("Telegram:", response.text)
 
-# ===============================
-# EBAY SEARCH
-# ===============================
+# ==========================
+# EBAY REQUEST
+# ==========================
 
-def search_ebay(query):
+def search_ebay(term):
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
     headers = {
@@ -65,102 +73,80 @@ def search_ebay(query):
     }
 
     params = {
-        "q": query,
-        "filter": "soldItems",
-        "limit": MAX_RESULTS,
-        "sort": "-price"
+        "q": term,
+        "filter": "soldItemsOnly:true",
+        "sort": "-price",
+        "limit": 20
     }
 
     response = requests.get(url, headers=headers, params=params)
 
     if response.status_code != 200:
-        print("Errore eBay:", response.status_code)
-        print(response.text)
-        return {}
+        print("STATUS CODE:", response.status_code)
+        print("RISPOSTA RAW:", response.text)
+        return []
 
-    return response.json()
+    data = response.json()
+    return data.get("itemSummaries", [])
 
+# ==========================
+# MAIN
+# ==========================
 
-# ===============================
-# MAIN LOGIC
-# ===============================
-
-def check_ebay():
+def main():
     print("Controllo venduti:", datetime.now())
 
     if not EBAY_TOKEN:
         print("EBAY_TOKEN mancante.")
         return
 
-    # Carica vecchi ID
-    if os.path.exists(PRODUCTS_FILE):
-        with open(PRODUCTS_FILE, "r") as f:
-            try:
-                old_ids = set(json.load(f))
-            except:
-                old_ids = set()
-    else:
-        old_ids = set()
+    saved_ids = load_saved_ids()
+    new_ids = set(saved_ids)
+    first_run = len(saved_ids) == 0
 
-    new_ids = set()
-    message = ""
-
-    first_run = len(old_ids) == 0
+    new_messages = []
 
     for term in SEARCH_TERMS:
-        results = search_ebay(term)
+        items = search_ebay(term)
 
-        if "itemSummaries" not in results:
-            continue
-
-        for item in results["itemSummaries"]:
+        for item in items:
             item_id = item.get("itemId")
-            title = item.get("title")
-            price = item.get("price", {}).get("value")
-            link = item.get("itemWebUrl")
 
             if not item_id:
                 continue
 
-            new_ids.add(item_id)
+            if item_id not in saved_ids:
+                new_ids.add(item_id)
 
-            # Se prima esecuzione → salva ma non notificare
-            if first_run:
-                continue
+                if not first_run:
+                    title = item.get("title", "No title")
+                    price = item.get("price", {}).get("value", "N/A")
+                    currency = item.get("price", {}).get("currency", "")
+                    link = item.get("itemWebUrl", "")
 
-            # Se nuovo venduto
-            if item_id not in old_ids:
-                message += (
-                    f"🔥 NUOVO VENDUTO\n"
-                    f"{title}\n"
-                    f"💰 €{price}\n"
-                    f"{link}\n\n"
-                )
+                    message = (
+                        f"🔥 VENDUTO TROVATO\n\n"
+                        f"{title}\n"
+                        f"{price} {currency}\n"
+                        f"{link}\n"
+                    )
 
-    # Prima esecuzione: solo inizializza
+                    new_messages.append(message)
+
+    # Prima esecuzione → salva solo ultimi 30 e basta
     if first_run:
         print("Prima esecuzione: inizializzo senza notificare.")
-        with open(PRODUCTS_FILE, "w") as f:
-            json.dump(list(new_ids), f)
+        save_ids(list(new_ids)[:MAX_INIT_ITEMS])
         print("Inizializzazione completata.")
         return
 
-    # Se ci sono nuovi venduti
-    if message:
-        send_telegram(message)
-        print("Notifica inviata!")
-    else:
-        print("Nessun nuovo venduto.")
+    # Invia notifiche
+    if new_messages:
+        final_text = "\n\n".join(new_messages)
+        send_telegram_message(final_text)
 
-    # Aggiorna file
-    all_ids = old_ids.union(new_ids)
-    with open(PRODUCTS_FILE, "w") as f:
-        json.dump(list(all_ids), f)
-
-
-# ===============================
-# RUN
-# ===============================
+    save_ids(new_ids)
+    print("Controllo completato.")
 
 if __name__ == "__main__":
-    check_ebay()
+    main()
