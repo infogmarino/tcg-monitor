@@ -1,13 +1,15 @@
-import requests
 import os
+import requests
 import json
-import time
+from datetime import datetime
 
 EBAY_APP_ID = os.getenv("EBAY_APP_ID")
+EBAY_CERT_ID = os.getenv("EBAY_CERT_ID")
+EBAY_TOKEN = os.getenv("EBAY_TOKEN")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
-SEARCH_QUERIES = [
+QUERIES = [
     "Charizard psa 10",
     "Pikachu psa 10",
     "Chinese psa 10",
@@ -19,122 +21,114 @@ SEARCH_QUERIES = [
     "Snorlax psa 10"
 ]
 
-FINDING_API_URL = "https://svcs.ebay.com/services/search/FindingService/v1"
-
-
-def send_telegram_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": text[:4000]
-    }
-    requests.post(url, data=payload)
+PRODUCTS_FILE = "products.json"
+MAX_STORED = 6  # salva solo ultimi 6 per query
 
 
 def load_products():
+    if not os.path.exists(PRODUCTS_FILE):
+        return {}
     try:
-        with open("products.json", "r") as f:
+        with open(PRODUCTS_FILE, "r") as f:
             return json.load(f)
     except:
         return {}
 
 
-def save_products(products):
-    with open("products.json", "w") as f:
-        json.dump(products, f, indent=2)
+def save_products(data):
+    with open(PRODUCTS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message
+    }
+    requests.post(url, data=payload)
 
 
 def search_sold_items(query):
+    url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+
     headers = {
-        "X-EBAY-SOA-OPERATION-NAME": "findCompletedItems",
-        "X-EBAY-SOA-SERVICE-VERSION": "1.13.0",
-        "X-EBAY-SOA-SECURITY-APPNAME": EBAY_APP_ID,
-        "X-EBAY-SOA-RESPONSE-DATA-FORMAT": "JSON"
+        "Authorization": f"Bearer {EBAY_TOKEN}",
+        "Content-Type": "application/json",
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
     }
 
     params = {
-        "keywords": query,
-        "itemFilter(0).name": "SoldItemsOnly",
-        "itemFilter(0).value": "true",
-        "sortOrder": "EndTimeSoonest"
+        "q": query,
+        "filter": "soldItemsOnly:true",
+        "sort": "newlyListed",
+        "limit": "10"
     }
 
-    response = requests.get(FINDING_API_URL, headers=headers, params=params)
+    response = requests.get(url, headers=headers, params=params)
 
     if response.status_code != 200:
         print("Errore eBay:", response.status_code)
+        print(response.text)
         return []
 
     data = response.json()
-
-    try:
-        items = data["findCompletedItemsResponse"][0]["searchResult"][0]["item"]
-    except:
-        return []
-
-    results = []
-
-    for item in items[:20]:
-        item_id = item["itemId"][0]
-        title = item["title"][0]
-        price = item["sellingStatus"][0]["currentPrice"][0]["__value__"]
-        currency = item["sellingStatus"][0]["currentPrice"][0]["@currencyId"]
-        url = item["viewItemURL"][0]
-
-        results.append({
-            "id": item_id,
-            "title": title,
-            "price": price,
-            "currency": currency,
-            "url": url
-        })
-
-    return results
+    return data.get("itemSummaries", [])
 
 
 def main():
-    print("Controllo venduti...")
+    print("Controllo venduti:", datetime.now())
 
-    if not EBAY_APP_ID:
-        print("Chiavi eBay mancanti.")
+    if not EBAY_TOKEN or not BOT_TOKEN or not CHAT_ID:
+        print("Chiavi mancanti.")
         return
 
     products = load_products()
+    updated = False
+    new_messages = []
 
-    first_run = len(products) == 0
-    new_products = {}
-
-    for query in SEARCH_QUERIES:
+    for query in QUERIES:
         print(f"--- Query: {query} ---")
+        items = search_sold_items(query)
 
-        sold_items = search_sold_items(query)
+        if query not in products:
+            products[query] = []
 
-        for item in sold_items:
-            item_id = item["id"]
+        stored_ids = set(products[query])
 
-            if item_id not in products:
-                new_products[item_id] = item
+        for item in items:
+            item_id = item["itemId"]
 
-                if not first_run:
-                    message = (
-                        f"🔥 NUOVO VENDUTO 🔥\n\n"
-                        f"{item['title']}\n"
-                        f"{item['price']} {item['currency']}\n\n"
-                        f"{item['url']}"
-                    )
-                    send_telegram_message(message)
-                    time.sleep(1)
+            if item_id not in stored_ids:
+                title = item["title"]
+                price = item.get("price", {}).get("value", "N/A")
+                currency = item.get("price", {}).get("currency", "")
+                url = item.get("itemWebUrl", "")
 
-    products.update(new_products)
-    save_products(products)
+                message = (
+                    f"🔥 NUOVO VENDUTO\n"
+                    f"{title}\n"
+                    f"{price} {currency}\n"
+                    f"{url}"
+                )
 
-    if first_run:
-        print("Prima esecuzione: inizializzo senza notificare.")
+                new_messages.append(message)
+
+                products[query].insert(0, item_id)
+                updated = True
+
+        # mantieni solo ultimi MAX_STORED
+        products[query] = products[query][:MAX_STORED]
+
+    if updated:
+        save_products(products)
+
+        for msg in new_messages:
+            send_telegram(msg)
+
+        print("Nuovi venduti trovati:", len(new_messages))
     else:
-        if len(new_products) == 0:
-            print("Nessun nuovo venduto.")
-        else:
-            print(f"{len(new_products)} nuovi venduti notificati.")
+        print("Nessun nuovo venduto.")
 
 
 if __name__ == "__main__":
