@@ -25,12 +25,16 @@ PRODUCTS_FILE = "products.json"
 def load_products():
     if not os.path.exists(PRODUCTS_FILE):
         return {}
+
     with open(PRODUCTS_FILE, "r") as f:
         try:
-            return json.load(f)
+            data = json.load(f)
+            if isinstance(data, dict):
+                return data
+            else:
+                return {}
         except:
             return {}
-
 
 def save_products(products):
     with open(PRODUCTS_FILE, "w") as f:
