@@ -1,42 +1,45 @@
-import requests
 import os
+import requests
 import json
 from datetime import datetime
 
-# ==============================
+# =========================
 # CONFIG
-# ==============================
+# =========================
 
 SEARCH_TERMS = [
     "Charizard PSA 10",
-    "Magikarp PSA 10"
+    "Lugia PSA 10",
 ]
 
-EBAY_CLIENT_ID = os.environ.get("EBAY_APP_ID")
-EBAY_CLIENT_SECRET = os.environ.get("EBAY_CERT_ID")
+EBAY_APP_ID = os.environ.get("EBAY_APP_ID")
+EBAY_CERT_ID = os.environ.get("EBAY_CERT_ID")
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-
-# ==============================
+# =========================
 # TELEGRAM
-# ==============================
+# =========================
 
 def send_telegram(message):
-    if not BOT_TOKEN or not CHAT_ID:
+    bot_token = os.environ.get("BOT_TOKEN")
+    chat_id = os.environ.get("CHAT_ID")
+
+    if not bot_token or not chat_id:
         print("Telegram non configurato.")
         return
 
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
-    requests.post(url, data={
-        "chat_id": CHAT_ID,
+    response = requests.post(url, data={
+        "chat_id": chat_id,
         "text": message
     })
 
-# ==============================
-# EBAY AUTH
-# ==============================
+    print("Risposta Telegram:", response.text)
+
+
+# =========================
+# EBAY TOKEN
+# =========================
 
 def get_access_token():
     url = "https://api.ebay.com/identity/v1/oauth2/token"
@@ -54,18 +57,19 @@ def get_access_token():
         url,
         headers=headers,
         data=data,
-        auth=(EBAY_CLIENT_ID, EBAY_CLIENT_SECRET)
+        auth=(EBAY_APP_ID, EBAY_CERT_ID)
     )
 
     if response.status_code == 200:
-        return response.json().get("access_token")
+        return response.json()["access_token"]
     else:
-        print("Errore token:", response.text)
+        print("Errore token:", response.status_code, response.text)
         return None
 
-# ==============================
+
+# =========================
 # EBAY SEARCH
-# ==============================
+# =========================
 
 def search_ebay(query, token):
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
@@ -77,32 +81,28 @@ def search_ebay(query, token):
 
     params = {
         "q": query,
-        "filter": "soldItems",
+        "filter": "soldItems:true",
         "limit": "20"
     }
 
     response = requests.get(url, headers=headers, params=params)
 
-    if response.status_code != 200:
-        print("Errore eBay:", response.status_code, response.text)
-        return {}
-
-    return response.json()
-
+    if response.status_code == 200:
+        return response.json()
     else:
-        print("Errore ricerca:", response.text)
+        print("Errore ricerca:", response.status_code, response.text)
         return {}
 
-# ==============================
-# MAIN CHECK
-# ==============================
+
+# =========================
+# MAIN
+# =========================
 
 def check_ebay():
     print("Controllo venduti:", datetime.now())
 
     token = get_access_token()
     if not token:
-        print("Token non ottenuto.")
         return
 
     # Carica ID già notificati
@@ -136,9 +136,8 @@ def check_ebay():
 
                     new_ids.add(item_id)
 
-    # Invia solo se ci sono nuovi venduti
     if message:
-        send_telegram("Test eBay forzato")
+        send_telegram(message)
         print("Notifica inviata!")
     else:
         print("Nessun nuovo venduto.")
@@ -149,9 +148,10 @@ def check_ebay():
     with open("products.json", "w") as f:
         json.dump(list(all_ids), f)
 
-# ==============================
+
+# =========================
 # RUN
-# ==============================
+# =========================
 
 if __name__ == "__main__":
     check_ebay()
