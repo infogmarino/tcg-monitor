@@ -1,10 +1,11 @@
-import os
 import requests
+import os
+import json
 from datetime import datetime
 
-EBAY_APP_ID = os.getenv("EBAY_APP_ID")
-EBAY_CERT_ID = os.getenv("EBAY_CERT_ID")
 EBAY_TOKEN = os.getenv("EBAY_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 QUERIES = [
     "Charizard psa 10",
@@ -18,78 +19,105 @@ QUERIES = [
     "Snorlax psa 10"
 ]
 
-def get_access_token():
-    url = "https://api.ebay.com/identity/v1/oauth2/token"
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded"
+PRODUCTS_FILE = "products.json"
+
+
+def load_products():
+    if not os.path.exists(PRODUCTS_FILE):
+        return {}
+    with open(PRODUCTS_FILE, "r") as f:
+        try:
+            return json.load(f)
+        except:
+            return {}
+
+
+def save_products(products):
+    with open(PRODUCTS_FILE, "w") as f:
+        json.dump(products, f, indent=4)
+
+
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message[:3500]
     }
-    data = {
-        "grant_type": "client_credentials",
-        "scope": "https://api.ebay.com/oauth/api_scope"
-    }
-
-    response = requests.post(
-        url,
-        headers=headers,
-        data=data,
-        auth=(EBAY_APP_ID, EBAY_CERT_ID)
-    )
-
-    if response.status_code != 200:
-        print("Errore generazione token:", response.text)
-        return None
-
-    return response.json().get("access_token")
+    requests.post(url, data=payload)
 
 
-def search_sold_items(token, query):
+def search_sold(query):
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
     headers = {
-        "Authorization": f"Bearer {token}"
+        "Authorization": f"Bearer {EBAY_TOKEN}",
+        "Content-Type": "application/json"
     }
 
     params = {
         "q": query,
-        "filter": "soldItemsOnly:true",
-        "limit": 10
+        "filter": "soldItems",
+        "sort": "-endTime",
+        "limit": "20"
     }
 
     response = requests.get(url, headers=headers, params=params)
 
-    print(f"\n--- Query: {query} ---")
-    print("Status code:", response.status_code)
-
     if response.status_code != 200:
-        print("Errore risposta:", response.text)
-        return
+        print("Errore eBay:", response.text)
+        return []
 
     data = response.json()
-    total = data.get("total", 0)
-    print("Totale risultati trovati:", total)
-
-    items = data.get("itemSummaries", [])
-
-    for item in items[:3]:
-        print(" -", item.get("title"))
+    return data.get("itemSummaries", [])
 
 
 def main():
-    print("Test venduti:", datetime.now())
+    print("Controllo venduti:", datetime.now())
 
-    if not EBAY_APP_ID or not EBAY_CERT_ID:
-        print("Chiavi eBay mancanti.")
+    if not EBAY_TOKEN or not BOT_TOKEN or not CHAT_ID:
+        print("Variabili ambiente mancanti.")
         return
 
-    token = get_access_token()
+    products = load_products()
+    first_run = len(products) == 0
 
-    if not token:
-        print("Token non generato.")
-        return
-
-    print("Token generato correttamente.")
+    new_products = {}
 
     for query in QUERIES:
-        search_sold_items(token, query)
+        items = search_sold(query)
+
+        for item in items:
+            item_id = item["itemId"]
+
+            if item_id not in products:
+                new_products[item_id] = {
+                    "title": item["title"],
+                    "price": item["price"]["value"],
+                    "currency": item["price"]["currency"],
+                    "url": item["itemWebUrl"]
+                }
+
+    if first_run:
+        print("Prima esecuzione: inizializzo senza notificare.")
+        products.update(new_products)
+        save_products(products)
+        print("Inizializzazione completata.")
+        return
+
+    for item_id, data in new_products.items():
+        message = (
+            f"🔥 NUOVA VENDITA!\n\n"
+            f"{data['title']}\n"
+            f"{data['price']} {data['currency']}\n"
+            f"{data['url']}"
+        )
+        send_telegram(message)
+
+    if new_products:
+        products.update(new_products)
+        save_products(products)
+        print("Nuove vendite salvate.")
+    else:
+        print("Nessuna nuova vendita.")
 
 
 if __name__ == "__main__":
