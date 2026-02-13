@@ -7,10 +7,14 @@ from datetime import datetime
 # CONFIG
 # =========================
 
-SEARCH_TERMS = [
+EBAY_TOKEN = os.getenv("EBAY_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+
+SEARCH_QUERIES = [
     "Charizard PSA 10",
     "Pikachu PSA 10",
-    "Chinese PSA 10",
+    "Chinese PSA 10 Pokemon",
     "Pokemon JP PSA 10",
     "Umbreon PSA 10",
     "Gengar PSA 10",
@@ -19,70 +23,9 @@ SEARCH_TERMS = [
     "Snorlax PSA 10"
 ]
 
-EBAY_CLIENT_ID = os.environ.get("EBAY_CLIENT_ID")
-EBAY_CLIENT_SECRET = os.environ.get("EBAY_CLIENT_SECRET")
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHAT_ID = os.environ.get("CHAT_ID")
-
 PRODUCTS_FILE = "products.json"
-INITIAL_LOAD_LIMIT = 30
-SEARCH_LIMIT = 20
+MAX_RESULTS_PER_QUERY = 10
 
-# =========================
-# EBAY TOKEN AUTO GENERATION
-# =========================
-
-def get_ebay_token():
-    url = "https://api.ebay.com/identity/v1/oauth2/token"
-
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
-
-    data = {
-        "grant_type": "client_credentials",
-        "scope": "https://api.ebay.com/oauth/api_scope"
-    }
-
-    response = requests.post(
-        url,
-        headers=headers,
-        data=data,
-        auth=(EBAY_CLIENT_ID, EBAY_CLIENT_SECRET)
-    )
-
-    if response.status_code != 200:
-        print("Errore generazione token:", response.text)
-        return None
-
-    return response.json().get("access_token")
-
-# =========================
-# EBAY SEARCH
-# =========================
-
-def search_ebay(query, token):
-    url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    params = {
-        "q": query,
-        "filter": "soldItems",
-        "limit": SEARCH_LIMIT
-    }
-
-    response = requests.get(url, headers=headers, params=params)
-
-    if response.status_code != 200:
-        print("Errore ricerca:", response.status_code, response.text)
-        return []
-
-    data = response.json()
-    return data.get("itemSummaries", [])
 
 # =========================
 # TELEGRAM
@@ -90,77 +33,121 @@ def search_ebay(query, token):
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": message[:4000]  # Evita errore text too long
+    }
 
-    # Telegram max 4096 caratteri
-    chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
+    response = requests.post(url, data=payload)
+    print("Telegram:", response.text)
 
-    for chunk in chunks:
-        requests.post(url, data={
-            "chat_id": CHAT_ID,
-            "text": chunk
-        })
 
 # =========================
-# MAIN
+# EBAY SEARCH
+# =========================
+
+def search_ebay(query):
+    url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+
+    headers = {
+        "Authorization": f"Bearer {EBAY_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    params = {
+        "q": query,
+        "filter": "soldItems",
+        "sort": "-price",
+        "limit": MAX_RESULTS_PER_QUERY
+    }
+
+    response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code != 200:
+        print("STATUS CODE:", response.status_code)
+        print("RISPOSTA RAW:", response.text)
+        return {}
+
+    return response.json()
+
+
+# =========================
+# LOAD / SAVE IDS
+# =========================
+
+def load_ids():
+    if not os.path.exists(PRODUCTS_FILE):
+        return set()
+
+    with open(PRODUCTS_FILE, "r") as f:
+        try:
+            data = json.load(f)
+            return set(data)
+        except:
+            return set()
+
+
+def save_ids(ids):
+    with open(PRODUCTS_FILE, "w") as f:
+        json.dump(list(ids), f)
+
+
+# =========================
+# MAIN CHECK
 # =========================
 
 def check_ebay():
     print("Controllo venduti:", datetime.now())
 
-    token = get_ebay_token()
-    if not token:
-        print("Token non generato.")
-        return
-
-    # Carica vecchi ID
-    try:
-        with open(PRODUCTS_FILE, "r") as f:
-            old_ids = set(json.load(f))
-    except:
-        old_ids = set()
-
+    old_ids = load_ids()
     new_ids = set()
-    message = ""
+    messages = []
 
-    for term in SEARCH_TERMS:
-        items = search_ebay(term, token)
+    for query in SEARCH_QUERIES:
+        data = search_ebay(query)
 
+        items = data.get("itemSummaries", [])
         for item in items:
             item_id = item.get("itemId")
-            if not item_id:
-                continue
-
-            new_ids.add(item_id)
 
             if item_id not in old_ids:
                 title = item.get("title", "No title")
                 price = item.get("price", {}).get("value", "N/A")
                 link = item.get("itemWebUrl", "")
 
-                message += (
-                    f"🔥 NUOVO VENDUTO\n"
+                msg = (
+                    f"🔥 NUOVO VENDUTO\n\n"
                     f"{title}\n"
                     f"💰 €{price}\n"
-                    f"{link}\n\n"
+                    f"{link}\n"
                 )
 
-    # PRIMA ESECUZIONE
+                messages.append(msg)
+                new_ids.add(item_id)
+
+    # PRIMA ESECUZIONE → salva senza notificare
     if not old_ids:
         print("Prima esecuzione: inizializzo senza notificare.")
-        new_ids = set(list(new_ids)[:INITIAL_LOAD_LIMIT])
+        save_ids(new_ids)
+        print("Inizializzazione completata.")
+        return
 
+    # Invia notifiche solo nuovi
+    if messages:
+        for msg in messages:
+            send_telegram(msg)
+
+        print("Notifiche inviate.")
     else:
-        if message:
-            send_telegram(message)
-            print("Notifica inviata!")
+        print("Nessun nuovo venduto.")
 
-    # Salva ID
+    # Aggiorna file
     all_ids = old_ids.union(new_ids)
-    with open(PRODUCTS_FILE, "w") as f:
-        json.dump(list(all_ids), f)
+    save_ids(all_ids)
 
-    print("Operazione completata.")
 
+# =========================
+# RUN
 # =========================
 
 if __name__ == "__main__":
