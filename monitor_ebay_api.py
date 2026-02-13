@@ -3,18 +3,14 @@ import json
 import os
 from datetime import datetime
 
-# ==============================
+# =========================
 # CONFIG
-# ==============================
-
-EBAY_APP_ID = os.getenv("EBAY_APP_ID")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# =========================
 
 SEARCH_TERMS = [
     "Charizard PSA 10",
     "Pikachu PSA 10",
-    "Chinese PSA 10 Pokemon",
+    "Chinese PSA 10",
     "Pokemon JP PSA 10",
     "Umbreon PSA 10",
     "Gengar PSA 10",
@@ -23,96 +19,120 @@ SEARCH_TERMS = [
     "Snorlax PSA 10"
 ]
 
-MAX_RESULTS_PER_SEARCH = 20
-MAX_NOTIFICATIONS_PER_RUN = 10
+EBAY_CLIENT_ID = os.environ.get("EBAY_CLIENT_ID")
+EBAY_CLIENT_SECRET = os.environ.get("EBAY_CLIENT_SECRET")
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 
 PRODUCTS_FILE = "products.json"
+INITIAL_LOAD_LIMIT = 30
+SEARCH_LIMIT = 20
 
-# ==============================
-# TELEGRAM
-# ==============================
+# =========================
+# EBAY TOKEN AUTO GENERATION
+# =========================
 
-def send_telegram(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    MAX_LENGTH = 4000
+def get_ebay_token():
+    url = "https://api.ebay.com/identity/v1/oauth2/token"
 
-    for i in range(0, len(message), MAX_LENGTH):
-        chunk = message[i:i + MAX_LENGTH]
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
 
-        payload = {
-            "chat_id": CHAT_ID,
-            "text": chunk
-        }
+    data = {
+        "grant_type": "client_credentials",
+        "scope": "https://api.ebay.com/oauth/api_scope"
+    }
 
-        response = requests.post(url, data=payload)
-        print("Telegram:", response.text)
+    response = requests.post(
+        url,
+        headers=headers,
+        data=data,
+        auth=(EBAY_CLIENT_ID, EBAY_CLIENT_SECRET)
+    )
 
-# ==============================
+    if response.status_code != 200:
+        print("Errore generazione token:", response.text)
+        return None
+
+    return response.json().get("access_token")
+
+# =========================
 # EBAY SEARCH
-# ==============================
+# =========================
 
-def search_ebay(query):
+def search_ebay(query, token):
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
     headers = {
-        "Authorization": f"Bearer {EBAY_APP_ID}",
+        "Authorization": f"Bearer {token}",
         "Content-Type": "application/json"
     }
 
     params = {
         "q": query,
         "filter": "soldItems",
-        "limit": MAX_RESULTS_PER_SEARCH,
-        "sort": "-price"
+        "limit": SEARCH_LIMIT
     }
 
     response = requests.get(url, headers=headers, params=params)
 
-    print("STATUS CODE:", response.status_code)
-
     if response.status_code != 200:
-        print("RISPOSTA RAW:", response.text)
-        return {}
+        print("Errore ricerca:", response.status_code, response.text)
+        return []
 
-    return response.json()
+    data = response.json()
+    return data.get("itemSummaries", [])
 
-# ==============================
-# MAIN LOGIC
-# ==============================
+# =========================
+# TELEGRAM
+# =========================
+
+def send_telegram(message):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+
+    # Telegram max 4096 caratteri
+    chunks = [message[i:i+4000] for i in range(0, len(message), 4000)]
+
+    for chunk in chunks:
+        requests.post(url, data={
+            "chat_id": CHAT_ID,
+            "text": chunk
+        })
+
+# =========================
+# MAIN
+# =========================
 
 def check_ebay():
     print("Controllo venduti:", datetime.now())
 
-    # Carica ID salvati
+    token = get_ebay_token()
+    if not token:
+        print("Token non generato.")
+        return
+
+    # Carica vecchi ID
     try:
         with open(PRODUCTS_FILE, "r") as f:
             old_ids = set(json.load(f))
     except:
         old_ids = set()
 
-    first_run = len(old_ids) == 0
     new_ids = set()
     message = ""
-    notifications_sent = 0
 
     for term in SEARCH_TERMS:
-        results = search_ebay(term)
+        items = search_ebay(term, token)
 
-        if "itemSummaries" not in results:
-            continue
-
-        for item in results["itemSummaries"]:
+        for item in items:
             item_id = item.get("itemId")
-
             if not item_id:
                 continue
 
             new_ids.add(item_id)
 
-            if first_run:
-                continue
-
-            if item_id not in old_ids and notifications_sent < MAX_NOTIFICATIONS_PER_RUN:
+            if item_id not in old_ids:
                 title = item.get("title", "No title")
                 price = item.get("price", {}).get("value", "N/A")
                 link = item.get("itemWebUrl", "")
@@ -124,32 +144,24 @@ def check_ebay():
                     f"{link}\n\n"
                 )
 
-                notifications_sent += 1
-
-    # Prima esecuzione → salva senza notificare
-    if first_run:
+    # PRIMA ESECUZIONE
+    if not old_ids:
         print("Prima esecuzione: inizializzo senza notificare.")
-        with open(PRODUCTS_FILE, "w") as f:
-            json.dump(list(new_ids), f)
-        print("Inizializzazione completata.")
-        return
+        new_ids = set(list(new_ids)[:INITIAL_LOAD_LIMIT])
 
-    # Invia notifiche
-    if message:
-        send_telegram(message)
-        print("Notifiche inviate!")
     else:
-        print("Nessun nuovo venduto.")
+        if message:
+            send_telegram(message)
+            print("Notifica inviata!")
 
-    # Salva ID aggiornati
+    # Salva ID
     all_ids = old_ids.union(new_ids)
-
     with open(PRODUCTS_FILE, "w") as f:
         json.dump(list(all_ids), f)
 
-# ==============================
-# RUN
-# ==============================
+    print("Operazione completata.")
+
+# =========================
 
 if __name__ == "__main__":
     check_ebay()
