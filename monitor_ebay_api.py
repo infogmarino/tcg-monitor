@@ -3,21 +3,28 @@ import requests
 import json
 from datetime import datetime
 
-# =========================
-# CONFIG
-# =========================
+# ==========================================
+# CARTE DA MONITORARE
+# ==========================================
 
 SEARCH_TERMS = [
     "Charizard PSA 10",
-    "Lugia PSA 10",
+    "Pikachu PSA 10",
+    "Umbreon PSA 10",
+    "Gengar PSA 10",
+    "Eevee PSA 10",
+    "Snorlax PSA 10",
+    "Pokemon Chinese PSA 10",
+    "Pokemon Japanese PSA 10",
+    "Pokemon Celebrations PSA 10"
 ]
 
 EBAY_APP_ID = os.environ.get("EBAY_APP_ID")
 EBAY_CERT_ID = os.environ.get("EBAY_CERT_ID")
 
-# =========================
+# ==========================================
 # TELEGRAM
-# =========================
+# ==========================================
 
 def send_telegram(message):
     bot_token = os.environ.get("BOT_TOKEN")
@@ -37,9 +44,9 @@ def send_telegram(message):
     print("Risposta Telegram:", response.text)
 
 
-# =========================
-# EBAY TOKEN
-# =========================
+# ==========================================
+# TOKEN EBAY
+# ==========================================
 
 def get_access_token():
     url = "https://api.ebay.com/identity/v1/oauth2/token"
@@ -67,22 +74,24 @@ def get_access_token():
         return None
 
 
-# =========================
-# EBAY SEARCH
-# =========================
+# ==========================================
+# RICERCA EBAY
+# ==========================================
 
 def search_ebay(query, token):
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
     headers = {
         "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_IT"
     }
 
     params = {
         "q": query,
         "filter": "soldItems:true",
-        "limit": "20"
+        "sort": "newlyListed",
+        "limit": "10"
     }
 
     response = requests.get(url, headers=headers, params=params)
@@ -94,9 +103,9 @@ def search_ebay(query, token):
         return {}
 
 
-# =========================
-# MAIN
-# =========================
+# ==========================================
+# LOGICA PRINCIPALE
+# ==========================================
 
 def check_ebay():
     print("Controllo venduti:", datetime.now())
@@ -105,15 +114,17 @@ def check_ebay():
     if not token:
         return
 
-    # Carica ID già notificati
+    # Carica ID già salvati
     try:
         with open("products.json", "r") as f:
             old_ids = set(json.load(f))
     except:
         old_ids = set()
 
-    new_ids = set()
-    message = ""
+    first_run = len(old_ids) == 0
+
+    all_found_ids = set()
+    new_items = []
 
     for term in SEARCH_TERMS:
         results = search_ebay(term, token)
@@ -121,20 +132,53 @@ def check_ebay():
         if "itemSummaries" in results:
             for item in results["itemSummaries"]:
                 item_id = item.get("itemId")
+                title = item.get("title", "").lower()
+
+                # Filtro sicurezza PSA 10 reale
+                if "psa 10" not in title:
+                    continue
+
+                all_found_ids.add(item_id)
 
                 if item_id not in old_ids:
-                    title = item.get("title")
-                    price = item.get("price", {}).get("value")
-                    link = item.get("itemWebUrl")
+                    new_items.append(item)
 
-                    message += (
-                        f"🔥 NUOVO VENDUTO\n"
-                        f"{title}\n"
-                        f"💰 €{price}\n"
-                        f"{link}\n\n"
-                    )
+    # ==========================
+    # PRIMA ESECUZIONE
+    # ==========================
+    if first_run:
+        print("Prima esecuzione: inizializzo senza notificare.")
 
-                    new_ids.add(item_id)
+        # Salva massimo 30 ID iniziali
+        initial_ids = list(all_found_ids)[:30]
+
+        with open("products.json", "w") as f:
+            json.dump(initial_ids, f)
+
+        print("Inizializzazione completata.")
+        return
+
+    # ==========================
+    # RUN NORMALI
+    # ==========================
+
+    # Limita massimo 10 notifiche per run
+    new_items = new_items[:10]
+
+    message = ""
+
+    for item in new_items:
+        item_id = item.get("itemId")
+        title = item.get("title")
+        price = item.get("price", {}).get("value")
+        link = item.get("itemWebUrl")
+
+        message += (
+            f"🔥 NUOVO VENDUTO\n"
+            f"{title}\n"
+            f"💰 €{price}\n"
+            f"{link}\n\n"
+        )
 
     if message:
         send_telegram(message)
@@ -142,16 +186,16 @@ def check_ebay():
     else:
         print("Nessun nuovo venduto.")
 
-    # Salva ID aggiornati
-    all_ids = old_ids.union(new_ids)
+    # Aggiorna file con nuovi ID
+    updated_ids = old_ids.union({item.get("itemId") for item in new_items})
 
     with open("products.json", "w") as f:
-        json.dump(list(all_ids), f)
+        json.dump(list(updated_ids), f)
 
 
-# =========================
-# RUN
-# =========================
+# ==========================================
+# AVVIO SCRIPT
+# ==========================================
 
 if __name__ == "__main__":
     check_ebay()
