@@ -1,12 +1,15 @@
 import requests
 import json
 import os
-import base64
 from datetime import datetime
 
 # ==============================
 # CONFIG
 # ==============================
+
+EBAY_APP_ID = os.getenv("EBAY_APP_ID")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 SEARCH_TERMS = [
     "Charizard PSA 10",
@@ -20,13 +23,10 @@ SEARCH_TERMS = [
     "Snorlax PSA 10"
 ]
 
-EBAY_APP_ID = os.getenv("EBAY_APP_ID")
-EBAY_CERT_ID = os.getenv("EBAY_CERT_ID")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+MAX_RESULTS_PER_SEARCH = 20
+MAX_NOTIFICATIONS_PER_RUN = 10
 
 PRODUCTS_FILE = "products.json"
-
 
 # ==============================
 # TELEGRAM
@@ -34,73 +34,47 @@ PRODUCTS_FILE = "products.json"
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    MAX_LENGTH = 4000
 
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "HTML"
-    }
+    for i in range(0, len(message), MAX_LENGTH):
+        chunk = message[i:i + MAX_LENGTH]
 
-    response = requests.post(url, data=payload)
-    print("Risposta Telegram:", response.text)
+        payload = {
+            "chat_id": CHAT_ID,
+            "text": chunk
+        }
 
-
-# ==============================
-# EBAY TOKEN
-# ==============================
-
-def get_ebay_token():
-    url = "https://api.ebay.com/identity/v1/oauth2/token"
-
-    credentials = f"{EBAY_APP_ID}:{EBAY_CERT_ID}"
-    encoded_credentials = base64.b64encode(credentials.encode()).decode()
-
-    headers = {
-        "Authorization": f"Basic {encoded_credentials}",
-        "Content-Type": "application/x-www-form-urlencoded"
-    }
-
-    data = {
-        "grant_type": "client_credentials",
-        "scope": "https://api.ebay.com/oauth/api_scope"
-    }
-
-    response = requests.post(url, headers=headers, data=data)
-
-    if response.status_code != 200:
-        print("Errore token:", response.text)
-        return None
-
-    return response.json().get("access_token")
-
+        response = requests.post(url, data=payload)
+        print("Telegram:", response.text)
 
 # ==============================
 # EBAY SEARCH
 # ==============================
 
-def search_ebay(query, token):
+def search_ebay(query):
     url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
     headers = {
-        "Authorization": f"Bearer {token}",
+        "Authorization": f"Bearer {EBAY_APP_ID}",
         "Content-Type": "application/json"
     }
 
     params = {
         "q": query,
         "filter": "soldItems",
-        "limit": "20",
-        "sort": "-endTime"
+        "limit": MAX_RESULTS_PER_SEARCH,
+        "sort": "-price"
     }
 
     response = requests.get(url, headers=headers, params=params)
 
+    print("STATUS CODE:", response.status_code)
+
     if response.status_code != 200:
-        print("Errore ricerca:", response.text)
+        print("RISPOSTA RAW:", response.text)
         return {}
 
     return response.json()
-
 
 # ==============================
 # MAIN LOGIC
@@ -109,54 +83,50 @@ def search_ebay(query, token):
 def check_ebay():
     print("Controllo venduti:", datetime.now())
 
-    token = get_ebay_token()
-    if not token:
-        print("Token non valido.")
-        return
-
     # Carica ID salvati
-    if os.path.exists(PRODUCTS_FILE):
+    try:
         with open(PRODUCTS_FILE, "r") as f:
-            try:
-                old_ids = set(json.load(f))
-            except:
-                old_ids = set()
-    else:
+            old_ids = set(json.load(f))
+    except:
         old_ids = set()
 
-    new_ids = set()
     first_run = len(old_ids) == 0
+    new_ids = set()
     message = ""
+    notifications_sent = 0
 
     for term in SEARCH_TERMS:
-        results = search_ebay(term, token)
+        results = search_ebay(term)
 
-        if "itemSummaries" in results:
-            for item in results["itemSummaries"]:
-                item_id = item.get("itemId")
+        if "itemSummaries" not in results:
+            continue
 
-                if not item_id:
-                    continue
+        for item in results["itemSummaries"]:
+            item_id = item.get("itemId")
 
-                if first_run:
-                    new_ids.add(item_id)
-                    continue
+            if not item_id:
+                continue
 
-                if item_id not in old_ids:
-                    title = item.get("title", "No title")
-                    price = item.get("price", {}).get("value", "N/A")
-                    link = item.get("itemWebUrl", "")
+            new_ids.add(item_id)
 
-                    message += (
-                        f"🔥 <b>NUOVO VENDUTO</b>\n"
-                        f"{title}\n"
-                        f"💰 {price} €\n"
-                        f"{link}\n\n"
-                    )
+            if first_run:
+                continue
 
-                    new_ids.add(item_id)
+            if item_id not in old_ids and notifications_sent < MAX_NOTIFICATIONS_PER_RUN:
+                title = item.get("title", "No title")
+                price = item.get("price", {}).get("value", "N/A")
+                link = item.get("itemWebUrl", "")
 
-    # Prima esecuzione: solo salva
+                message += (
+                    f"🔥 NUOVO VENDUTO\n"
+                    f"{title}\n"
+                    f"💰 €{price}\n"
+                    f"{link}\n\n"
+                )
+
+                notifications_sent += 1
+
+    # Prima esecuzione → salva senza notificare
     if first_run:
         print("Prima esecuzione: inizializzo senza notificare.")
         with open(PRODUCTS_FILE, "w") as f:
@@ -164,16 +134,18 @@ def check_ebay():
         print("Inizializzazione completata.")
         return
 
-    # Invia solo se ci sono nuovi venduti
+    # Invia notifiche
     if message:
         send_telegram(message)
-        print("Notifica inviata!")
+        print("Notifiche inviate!")
+    else:
+        print("Nessun nuovo venduto.")
 
     # Salva ID aggiornati
     all_ids = old_ids.union(new_ids)
+
     with open(PRODUCTS_FILE, "w") as f:
         json.dump(list(all_ids), f)
-
 
 # ==============================
 # RUN
