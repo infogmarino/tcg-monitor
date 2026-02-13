@@ -1,12 +1,9 @@
 import requests
-import json
 import os
+import json
 import time
-from datetime import datetime
 
 EBAY_APP_ID = os.getenv("EBAY_APP_ID")
-EBAY_CERT_ID = os.getenv("EBAY_CERT_ID")
-EBAY_TOKEN = os.getenv("EBAY_TOKEN")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
@@ -22,124 +19,122 @@ SEARCH_QUERIES = [
     "Snorlax psa 10"
 ]
 
-EBAY_API_URL = "https://svcs.ebay.com/services/search/FindingService/v1"
+FINDING_API_URL = "https://svcs.ebay.com/services/search/FindingService/v1"
 
 
-def send_telegram(message):
-    if not BOT_TOKEN or not CHAT_ID:
-        return
-
+def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": CHAT_ID,
-        "text": message[:4000]
+        "text": text[:4000]
     }
     requests.post(url, data=payload)
 
 
 def load_products():
-    if not os.path.exists("products.json"):
-        return {}
-
     try:
         with open("products.json", "r") as f:
-            data = json.load(f)
-            if isinstance(data, dict):
-                return data
-            return {}
+            return json.load(f)
     except:
         return {}
 
 
 def save_products(products):
     with open("products.json", "w") as f:
-        json.dump(products, f, indent=4)
+        json.dump(products, f, indent=2)
 
 
 def search_sold_items(query):
+    headers = {
+        "X-EBAY-SOA-OPERATION-NAME": "findCompletedItems",
+        "X-EBAY-SOA-SERVICE-VERSION": "1.13.0",
+        "X-EBAY-SOA-SECURITY-APPNAME": EBAY_APP_ID,
+        "X-EBAY-SOA-RESPONSE-DATA-FORMAT": "JSON"
+    }
+
     params = {
-        "OPERATION-NAME": "findCompletedItems",
-        "SERVICE-VERSION": "1.13.0",
-        "SECURITY-APPNAME": EBAY_APP_ID,
-        "RESPONSE-DATA-FORMAT": "JSON",
-        "REST-PAYLOAD": "",
         "keywords": query,
         "itemFilter(0).name": "SoldItemsOnly",
         "itemFilter(0).value": "true",
-        "paginationInput.entriesPerPage": "10"
+        "sortOrder": "EndTimeSoonest"
     }
 
-    for attempt in range(3):
-        response = requests.get(EBAY_API_URL, params=params)
+    response = requests.get(FINDING_API_URL, headers=headers, params=params)
 
-        if response.status_code == 200:
-            return response.json()
-
+    if response.status_code != 200:
         print("Errore eBay:", response.status_code)
-        time.sleep(3)
+        return []
 
-    return None
+    data = response.json()
+
+    try:
+        items = data["findCompletedItemsResponse"][0]["searchResult"][0]["item"]
+    except:
+        return []
+
+    results = []
+
+    for item in items[:20]:
+        item_id = item["itemId"][0]
+        title = item["title"][0]
+        price = item["sellingStatus"][0]["currentPrice"][0]["__value__"]
+        currency = item["sellingStatus"][0]["currentPrice"][0]["@currencyId"]
+        url = item["viewItemURL"][0]
+
+        results.append({
+            "id": item_id,
+            "title": title,
+            "price": price,
+            "currency": currency,
+            "url": url
+        })
+
+    return results
 
 
 def main():
-    print("Controllo venduti:", datetime.now())
+    print("Controllo venduti...")
 
     if not EBAY_APP_ID:
         print("Chiavi eBay mancanti.")
         return
 
-    saved_products = load_products()
+    products = load_products()
+
+    first_run = len(products) == 0
     new_products = {}
-    first_run = len(saved_products) == 0
 
     for query in SEARCH_QUERIES:
         print(f"--- Query: {query} ---")
 
-        data = search_sold_items(query)
-        time.sleep(2)
+        sold_items = search_sold_items(query)
 
-        if not data:
-            continue
+        for item in sold_items:
+            item_id = item["id"]
 
-        try:
-            items = data["findCompletedItemsResponse"][0]["searchResult"][0].get("item", [])
-        except:
-            continue
+            if item_id not in products:
+                new_products[item_id] = item
 
-        for item in items:
-            item_id = item["itemId"][0]
+                if not first_run:
+                    message = (
+                        f"🔥 NUOVO VENDUTO 🔥\n\n"
+                        f"{item['title']}\n"
+                        f"{item['price']} {item['currency']}\n\n"
+                        f"{item['url']}"
+                    )
+                    send_telegram_message(message)
+                    time.sleep(1)
 
-            if item_id not in saved_products:
-                title = item["title"][0]
-                price = item["sellingStatus"][0]["currentPrice"][0]["__value__"]
-                currency = item["sellingStatus"][0]["currentPrice"][0]["@currencyId"]
-                url = item["viewItemURL"][0]
-
-                new_products[item_id] = {
-                    "title": title,
-                    "price": price,
-                    "currency": currency,
-                    "url": url
-                }
+    products.update(new_products)
+    save_products(products)
 
     if first_run:
         print("Prima esecuzione: inizializzo senza notificare.")
-        save_products(new_products)
-        print("Inizializzazione completata.")
-        return
-
-    if new_products:
-        message = "🔥 NUOVI VENDUTI 🔥\n\n"
-        for item in new_products.values():
-            message += f"{item['title']}\n💰 {item['price']} {item['currency']}\n{item['url']}\n\n"
-
-        send_telegram(message)
-
-        saved_products.update(new_products)
-        save_products(saved_products)
-        print("Nuovi venduti notificati.")
     else:
-        print("Nessun nuovo venduto.")
+        if len(new_products) == 0:
+            print("Nessun nuovo venduto.")
+        else:
+            print(f"{len(new_products)} nuovi venduti notificati.")
 
 
 if __name__ == "__main__":
