@@ -1,13 +1,12 @@
-import os
 import requests
+import os
 import json
+import base64
 from datetime import datetime
 
-EBAY_APP_ID = os.getenv("EBAY_APP_ID")
-EBAY_CERT_ID = os.getenv("EBAY_CERT_ID")
-EBAY_TOKEN = os.getenv("EBAY_TOKEN")
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+# =============================
+# CONFIG
+# =============================
 
 QUERIES = [
     "Charizard psa 10",
@@ -21,115 +20,149 @@ QUERIES = [
     "Snorlax psa 10"
 ]
 
+MAX_STORED_PER_QUERY = 6
 PRODUCTS_FILE = "products.json"
-MAX_STORED = 6  # salva solo ultimi 6 per query
 
+# =============================
+# EBAY TOKEN AUTO GENERATION
+# =============================
+
+def get_ebay_token():
+    app_id = os.getenv("EBAY_APP_ID")
+    cert_id = os.getenv("EBAY_CERT_ID")
+
+    credentials = f"{app_id}:{cert_id}"
+    encoded_credentials = base64.b64encode(credentials.encode()).decode()
+
+    headers = {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": f"Basic {encoded_credentials}"
+    }
+
+    data = {
+        "grant_type": "client_credentials",
+        "scope": "https://api.ebay.com/oauth/api_scope"
+    }
+
+    response = requests.post(
+        "https://api.ebay.com/identity/v1/oauth2/token",
+        headers=headers,
+        data=data
+    )
+
+    if response.status_code != 200:
+        print("Errore generazione token:")
+        print(response.text)
+        return None
+
+    return response.json()["access_token"]
+
+# =============================
+# LOAD / SAVE PRODUCTS
+# =============================
 
 def load_products():
     if not os.path.exists(PRODUCTS_FILE):
         return {}
-    try:
-        with open(PRODUCTS_FILE, "r") as f:
-            return json.load(f)
-    except:
-        return {}
+    with open(PRODUCTS_FILE, "r") as f:
+        return json.load(f)
 
-
-def save_products(data):
+def save_products(products):
     with open(PRODUCTS_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(products, f, indent=2)
 
+# =============================
+# TELEGRAM
+# =============================
 
 def send_telegram(message):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
+    bot_token = os.getenv("BOT_TOKEN")
+    chat_id = os.getenv("CHAT_ID")
+
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+
+    requests.post(url, data={
+        "chat_id": chat_id,
         "text": message
-    }
-    requests.post(url, data=payload)
+    })
 
-
-def search_sold_items(query):
-    url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
-
-    headers = {
-        "Authorization": f"Bearer {EBAY_TOKEN}",
-        "Content-Type": "application/json",
-        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
-    }
-
-    params = {
-        "q": query,
-        "filter": "soldItemsOnly:true",
-        "sort": "newlyListed",
-        "limit": "10"
-    }
-
-    response = requests.get(url, headers=headers, params=params)
-
-    if response.status_code != 200:
-        print("Errore eBay:", response.status_code)
-        print(response.text)
-        return []
-
-    data = response.json()
-    return data.get("itemSummaries", [])
-
+# =============================
+# MAIN
+# =============================
 
 def main():
     print("Controllo venduti:", datetime.now())
 
-    if not EBAY_TOKEN or not BOT_TOKEN or not CHAT_ID:
-        print("Chiavi mancanti.")
+    token = get_ebay_token()
+    if not token:
         return
 
-    products = load_products()
-    updated = False
-    new_messages = []
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    stored_products = load_products()
+    new_sold_found = 0
 
     for query in QUERIES:
         print(f"--- Query: {query} ---")
-        items = search_sold_items(query)
 
-        if query not in products:
-            products[query] = []
+        url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
 
-        stored_ids = set(products[query])
+        params = {
+            "q": query,
+            "filter": "soldItemsOnly:true",
+            "limit": 10
+        }
+
+        response = requests.get(url, headers=headers, params=params)
+
+        if response.status_code != 200:
+            print("Errore eBay:", response.status_code)
+            print(response.text)
+            continue
+
+        data = response.json()
+        items = data.get("itemSummaries", [])
+
+        if query not in stored_products:
+            stored_products[query] = []
+
+        existing_ids = stored_products[query]
 
         for item in items:
             item_id = item["itemId"]
 
-            if item_id not in stored_ids:
+            if item_id not in existing_ids:
+                new_sold_found += 1
+
                 title = item["title"]
-                price = item.get("price", {}).get("value", "N/A")
-                currency = item.get("price", {}).get("currency", "")
-                url = item.get("itemWebUrl", "")
+                price = item["price"]["value"]
+                currency = item["price"]["currency"]
+                link = item["itemWebUrl"]
 
                 message = (
-                    f"🔥 NUOVO VENDUTO\n"
+                    f"🟢 NUOVO VENDUTO\n\n"
                     f"{title}\n"
                     f"{price} {currency}\n"
-                    f"{url}"
+                    f"{link}"
                 )
 
-                new_messages.append(message)
+                send_telegram(message)
 
-                products[query].insert(0, item_id)
-                updated = True
+                stored_products[query].insert(0, item_id)
 
-        # mantieni solo ultimi MAX_STORED
-        products[query] = products[query][:MAX_STORED]
+        # Manteniamo solo gli ultimi 6
+        stored_products[query] = stored_products[query][:MAX_STORED_PER_QUERY]
 
-    if updated:
-        save_products(products)
+    save_products(stored_products)
 
-        for msg in new_messages:
-            send_telegram(msg)
-
-        print("Nuovi venduti trovati:", len(new_messages))
-    else:
+    if new_sold_found == 0:
         print("Nessun nuovo venduto.")
+    else:
+        print("Nuovi venduti trovati:", new_sold_found)
 
+# =============================
 
 if __name__ == "__main__":
     main()
