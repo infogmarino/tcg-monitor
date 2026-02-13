@@ -1,12 +1,13 @@
 import requests
-import os
 import json
-import base64
+import os
 from datetime import datetime
 
-# =============================
-# CONFIG
-# =============================
+EBAY_APP_ID = os.getenv("EBAY_APP_ID")
+EBAY_CERT_ID = os.getenv("EBAY_CERT_ID")
+EBAY_TOKEN = os.getenv("EBAY_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
 
 QUERIES = [
     "Charizard psa 10",
@@ -20,149 +21,108 @@ QUERIES = [
     "Snorlax psa 10"
 ]
 
-MAX_STORED_PER_QUERY = 6
-PRODUCTS_FILE = "products.json"
+MAX_STORED = 5  # Manteniamo solo ultimi 5 per query
 
-# =============================
-# EBAY TOKEN AUTO GENERATION
-# =============================
-
-def get_ebay_token():
-    app_id = os.getenv("EBAY_APP_ID")
-    cert_id = os.getenv("EBAY_CERT_ID")
-
-    credentials = f"{app_id}:{cert_id}"
-    encoded_credentials = base64.b64encode(credentials.encode()).decode()
-
-    headers = {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Authorization": f"Basic {encoded_credentials}"
-    }
-
-    data = {
-        "grant_type": "client_credentials",
-        "scope": "https://api.ebay.com/oauth/api_scope"
-    }
-
-    response = requests.post(
-        "https://api.ebay.com/identity/v1/oauth2/token",
-        headers=headers,
-        data=data
-    )
-
-    if response.status_code != 200:
-        print("Errore generazione token:")
-        print(response.text)
-        return None
-
-    return response.json()["access_token"]
-
-# =============================
-# LOAD / SAVE PRODUCTS
-# =============================
-
-def load_products():
-    if not os.path.exists(PRODUCTS_FILE):
-        return {}
-    with open(PRODUCTS_FILE, "r") as f:
-        return json.load(f)
-
-def save_products(products):
-    with open(PRODUCTS_FILE, "w") as f:
-        json.dump(products, f, indent=2)
-
-# =============================
-# TELEGRAM
-# =============================
 
 def send_telegram(message):
-    bot_token = os.getenv("BOT_TOKEN")
-    chat_id = os.getenv("CHAT_ID")
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    data = {
+        "chat_id": CHAT_ID,
+        "text": message,
+        "parse_mode": "HTML",
+        "disable_web_page_preview": True
+    }
+    requests.post(url, data=data)
 
-    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
 
-    requests.post(url, data={
-        "chat_id": chat_id,
-        "text": message
-    })
+def load_products():
+    if not os.path.exists("products.json"):
+        return {}
+    with open("products.json", "r") as f:
+        try:
+            return json.load(f)
+        except:
+            return {}
 
-# =============================
-# MAIN
-# =============================
+
+def save_products(data):
+    with open("products.json", "w") as f:
+        json.dump(data, f, indent=2)
+
+
+def search_sold(query):
+    url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+
+    headers = {
+        "Authorization": f"Bearer {EBAY_TOKEN}",
+        "X-EBAY-C-MARKETPLACE-ID": "EBAY_US"
+    }
+
+    params = {
+        "q": query,
+        "filter": "soldItemsOnly:true",
+        "limit": 10,
+        "sort": "-price"
+    }
+
+    response = requests.get(url, headers=headers, params=params)
+
+    if response.status_code != 200:
+        print("Errore eBay:", response.status_code)
+        print(response.text)
+        return []
+
+    data = response.json()
+    return data.get("itemSummaries", [])
+
 
 def main():
     print("Controllo venduti:", datetime.now())
 
-    token = get_ebay_token()
-    if not token:
-        return
-
-    headers = {
-        "Authorization": f"Bearer {token}"
-    }
-
-    stored_products = load_products()
-    new_sold_found = 0
+    products = load_products()
+    new_sales = []
 
     for query in QUERIES:
         print(f"--- Query: {query} ---")
 
-        url = "https://api.ebay.com/buy/browse/v1/item_summary/search"
+        items = search_sold(query)
 
-        params = {
-            "q": query,
-            "filter": "soldItemsOnly:true",
-            "limit": 10
-        }
+        if query not in products:
+            products[query] = []
 
-        response = requests.get(url, headers=headers, params=params)
-
-        if response.status_code != 200:
-            print("Errore eBay:", response.status_code)
-            print(response.text)
-            continue
-
-        data = response.json()
-        items = data.get("itemSummaries", [])
-
-        if query not in stored_products:
-            stored_products[query] = []
-
-        existing_ids = stored_products[query]
+        stored_ids = products[query]
 
         for item in items:
             item_id = item["itemId"]
 
-            if item_id not in existing_ids:
-                new_sold_found += 1
-
-                title = item["title"]
-                price = item["price"]["value"]
-                currency = item["price"]["currency"]
-                link = item["itemWebUrl"]
+            if item_id not in stored_ids:
+                title = item.get("title", "")
+                price = item.get("price", {}).get("value", "")
+                currency = item.get("price", {}).get("currency", "")
+                url = item.get("itemWebUrl", "")
 
                 message = (
-                    f"🟢 NUOVO VENDUTO\n\n"
-                    f"{title}\n"
-                    f"{price} {currency}\n"
-                    f"{link}"
+                    f"🔥 <b>NUOVO VENDUTO</b>\n\n"
+                    f"<b>{title}</b>\n"
+                    f"💰 {price} {currency}\n"
+                    f"{url}"
                 )
 
-                send_telegram(message)
+                new_sales.append(message)
+                stored_ids.append(item_id)
 
-                stored_products[query].insert(0, item_id)
+        # Manteniamo solo ultimi MAX_STORED
+        products[query] = stored_ids[-MAX_STORED:]
 
-        # Manteniamo solo gli ultimi 6
-        stored_products[query] = stored_products[query][:MAX_STORED_PER_QUERY]
+    save_products(products)
 
-    save_products(stored_products)
-
-    if new_sold_found == 0:
-        print("Nessun nuovo venduto.")
+    if new_sales:
+        print("Nuovi venduti trovati:", len(new_sales))
+        for msg in new_sales:
+            send_telegram(msg)
     else:
-        print("Nuovi venduti trovati:", new_sold_found)
+        print("Nessun nuovo venduto.")
 
-# =============================
 
 if __name__ == "__main__":
     main()
