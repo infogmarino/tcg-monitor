@@ -17,6 +17,10 @@ CATEGORIES = {
     # DNA CARDS
     "DNA - Dragon Ball": "https://dnacards.it/categoria/prevendita/?show=in_stock&orderby=&filter_category=70&brand=18",
     "DNA - One Piece": "https://dnacards.it/categoria/prevendita/?show=in_stock&orderby=&filter_category=70&brand=48",
+
+    # CARDGAMECLUB
+"CardGameClub - Pokemon 30°": "https://cardgameclub.it/collections/pokemon-30esimo-anniversario",
+    
 }
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
